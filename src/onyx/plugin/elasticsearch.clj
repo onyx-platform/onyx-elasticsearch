@@ -9,13 +9,14 @@
 
 (defn- write-as
   [type op & args]
-  (let [nsp (if (= type :native) ("clojurewerkz.elastisch.native.document/") ("clojurewerkz.elastisch.rest.document/"))]
+  (let [nsp (if (= type :native) "clojurewerkz.elastisch.native.document/" "clojurewerkz.elastisch.rest.document/")]
+    (println "Sending:" (resolve (symbol (str nsp (name op)))) (flatten args))
     (apply (resolve (symbol (str nsp (name op)))) (flatten args))))
 
 (defn- write-elasticsearch [cxn doc settings]
   (let [client-type (:elasticsearch/client-type settings)
         index (:elasticsearch/index settings)
-        mapping (:elastcisearch/mapping settings)
+        mapping (:elasticsearch/mapping settings)
         doc-id (:elasticsearch/doc-id settings)]
     (case (:elasticsearch/write-type settings)
       :insert (write-as client-type :create cxn index mapping doc :id doc-id)
@@ -26,17 +27,21 @@
   [{{host :elasticsearch/host
      port :elasticsearch/port
      cluster-name :elasticsearch/cluster-name
-     http-ops :elasticsearch/http-ops :or {http-ops {}}
-     client-type :elasticsearch/client-type :or {client-type :http}
+     http-ops :elasticsearch/http-ops
+     client-type :elasticsearch/client-type
      index :elasticsearch/index
      doc-id :elasticsearch/doc-id
-     mapping :elasticsearch/mapping :or {mapping "_default_"}
-     write-type :elasticsearch/write-type :or {write-type :insert}} :onyx.core/task-map} _]
+     mapping :elasticsearch/mapping
+     write-type :elasticsearch/write-type
+     :or {http-ops {}
+          client-type :http
+          mapping "_default_"
+          write-type :insert}} :onyx.core/task-map} _]
   {:pre [(not (empty? host))
-         (not (empty? port))
-         (contains? [:http :native] client-type)
+         (and (number? port) (< 0 port 65536))
+         (some #{client-type} [:http :native])
          (or (= client-type :http) (not (empty? cluster-name)))
-         (contains? [:insert :upsert :delete] write-type)
+         (some #{write-type} [:insert :upsert :delete])
          (or (not= write-type :delete) (not (empty? doc-id)))]}
   (log/info (str "Created ElasticSearch " client-type " client for " host ":" port))
   {:elasticsearch/connection (if
@@ -61,14 +66,17 @@
   (write-batch
     [_ {results :onyx.core/results
         connection :elasticsearch/connection
-        settings :elasticsearch/doc-defaults}]
+        defaults :elasticsearch/doc-defaults}]
     (doseq [msg (mapcat :leaves (:tree results))]
-      (let [document (or (:elasticsearch/message msg) msg)]
-        (when (contains? msg :elasticsearch/message)
-          (merge settings (select-keys msg [:elasticsearch/index
-                                            :elasticsearch/doc-id
-                                            :elasticsearch/mapping
-                                            :elasticsearch/write-type])))
+      (let [document (or (:elasticsearch/message (:message msg)) (:message msg))
+            settings (if
+                       (contains? (:message msg) :elasticsearch/message)
+                       (merge defaults (select-keys
+                                         (:message msg) [:elasticsearch/index
+                                                         :elasticsearch/doc-id
+                                                         :elasticsearch/mapping
+                                                         :elasticsearch/write-type]))
+                       defaults)]
         (log/debug (str "Message Settings: " settings))
         (write-elasticsearch connection document settings)))
     {})

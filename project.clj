@@ -7,5 +7,5 @@
                  [org.onyxplatform/onyx "0.7.14"]
                  [clojurewerkz/elastisch "2.2.0-beta4"]
                  [com.taoensso/timbre "4.1.4"]]
-  :profiles {:dev {:dependencies []
-                   :plugins []}})
+  :profiles {:dev {:dependencies [[http-kit "2.1.19"]
+                                  [org.clojure/data.json "0.2.6"]]}})
