@@ -9,7 +9,7 @@
   ([]
     (es-cluster-name "127.0.0.1" 9200))
   ([host port]
-   (let [{:keys [body error]} @(http/get (str "http://" host ":" port))]
+   (let [{:keys [body error]} @(http/get (str "http://" host ":" port) {:timeout 5000})]
      (if error
        (throw (Exception. "Failed to connect to ElasticSearch cluster.  Please ensure it is runnning locally prior to running tests"))
        (get (json/read-str body) "cluster_name")))))
@@ -22,8 +22,7 @@
    (es/connect (str "http://" host ":" port))))
 
 (defn delete-indexes
-  "Deletes all indexes in the local Elastic Search cluster.  Provided as a convenience to clear your cluster
-  after running the unit tests.  It is not explicitely called anywhere."
+  "Deletes all indexes in the local Elastic Search cluster.  Used to clean up after testing."
   ([]
     (delete-indexes "127.0.0.1" 9200))
   ([host port]

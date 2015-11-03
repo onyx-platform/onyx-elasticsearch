@@ -1,5 +1,5 @@
 (ns onyx.plugin.output-test
-  (:require [clojure.core.async :refer [chan >!! <!! close! sliding-buffer]]
+  (:require [clojure.core.async :refer [chan >!! <!! close! sliding-buffer go <!]]
             [clojure.test :refer [deftest is testing]]
             [onyx.util.helper :as u]
             [taoensso.timbre :refer [info]]
@@ -10,13 +10,20 @@
             [clojurewerkz.elastisch.query :as q]
             [clojurewerkz.elastisch.rest.response :as esrsp]))
 
-;; ElasticSearch should be running locally on
-;; standard ports (http: 9200, native: 9300)
-;; prior to running the tests
+;; ElasticSearch should be running locally on standard ports
+;; (http: 9200, native: 9300) prior to running the tests
+;; All indexes will be cleared after tests run, so use a
+;; dedicated instance without any other data.
 
 (def id (str (java.util.UUID/randomUUID)))
 
 (def zk-addr "127.0.0.1:2188")
+
+(def es-host "127.0.0.1")
+
+(def es-rest-port 9200)
+
+(def es-native-port 9300)
 
 (def env-config 
   {:onyx/id id
@@ -38,14 +45,13 @@
 
 (def peer-group (onyx.api/start-peer-group peer-config))
 
-(def n-messages 1)
+(def n-messages 6)
 
 (def batch-size 20)
 
 (def workflow [[:in :write-messages]])
 
-;; TODO: Catalog scenarios
-(def catalog
+(def catalog-base
   [{:onyx/name :in
     :onyx/plugin :onyx.plugin.core-async/input
     :onyx/type :input
@@ -58,63 +64,127 @@
     :onyx/plugin :onyx.plugin.elasticsearch/write-messages
     :onyx/type :output
     :onyx/medium :elasticsearch
-    :elasticsearch/host "127.0.0.1"
-    :elasticsearch/port 9200
-    :elasticsearch/cluster-name (u/es-cluster-name "127.0.0.1" 9200)
-    :elasticsearch/client-type :http
+    :elasticsearch/host es-host
+    :elasticsearch/cluster-name (u/es-cluster-name es-host es-rest-port)
     :elasticsearch/http-ops {}
     :elasticsearch/index id
     :elasticsearch/mapping "_default_"
-    :elasticsearch/write-type :insert
     :onyx/batch-size batch-size
     :onyx/max-peers 1
-    :onyx/doc "Documentation for your datasink"}])
+    :onyx/doc "Writes documents to elasticsearch"}])
 
-(def in-chan (chan (inc n-messages)))
+;; Catalog for HTTP client and explicit write type defined
+(def catalog-http&write
+  [(first catalog-base)
+   (merge
+     (second catalog-base)
+     {:elasticsearch/port es-rest-port
+      :elasticsearch/client-type :http
+      :elasticsearch/write-type :insert})])
 
-(defn inject-in-ch [_ _]
-  {:core.async/chan in-chan})
+;; Catalog for Native client and no write type defined
+(def catalog-native-no-write
+  [(first catalog-base)
+   (merge
+     (second catalog-base)
+     {:elasticsearch/port es-native-port
+      :elasticsearch/client-type :native})])
 
-(def in-calls
-  {:lifecycle/before-task-start inject-in-ch})
+(def in-chan-http (chan (inc n-messages)))
 
-(def lifecycles
+(def in-chan-native (chan (inc n-messages)))
+
+(defn inject-in-ch-http [_ _]
+  {:core.async/chan in-chan-http})
+
+(defn inject-in-ch-native [_ _]
+  {:core.async/chan in-chan-native})
+
+(def in-calls-http
+  {:lifecycle/before-task-start inject-in-ch-http})
+
+(def in-calls-native
+  {:lifecycle/before-task-start inject-in-ch-native})
+
+(def lifecycles-http
   [{:lifecycle/task :in
-    :lifecycle/calls ::in-calls}
+    :lifecycle/calls ::in-calls-http}
    {:lifecycle/task :in
     :lifecycle/calls :onyx.plugin.core-async/reader-calls}
    {:lifecycle/task :write-messages
     :lifecycle/calls :onyx.plugin.elasticsearch/write-messages-calls}])
 
-;; TODO: Inject input data
-(doseq [n (range n-messages)]
-  (>!! in-chan {:elasticsearch/message {:n n} :elasticsearch/doc-id n}))
-
-(>!! in-chan :done)
-(close! in-chan)
+(def lifecycles-native
+  (into [] (flatten [(assoc (first lifecycles-http) :lifecycle/calls ::in-calls-native) (rest lifecycles-http)])))
 
 (def v-peers (onyx.api/start-peers 2 peer-group))
 
-(def job-info 
-  (onyx.api/submit-job
-    peer-config
-    {:catalog catalog
-     :workflow workflow
-     :lifecycles lifecycles
-     :task-scheduler :onyx.task-scheduler/balanced}))
+(defn run-job
+  [name ch lc catalog & segments]
+  (doseq [seg segments] (>!! ch seg))
+  (>!! ch :done)
+  (let [job-info (onyx.api/submit-job
+                   peer-config
+                   {:catalog catalog
+                    :workflow workflow
+                    :lifecycles lc
+                    :task-scheduler :onyx.task-scheduler/balanced})]
+    (info (str "Awaiting job completion for " name))
+    (onyx.api/await-job-completion peer-config (:job-id job-info))))
 
-(info "Awaiting job completion")
+(run-job
+  "HTTP Client Job with Explicit Write Type"
+  in-chan-http
+  lifecycles-http
+  catalog-http&write
+  {:name "http:insert_plain-msg_noid"}
+  {:elasticsearch/message {:name "http:insert_detail-msg_id"} :elasticsearch/doc-id "1"}
+  {:elasticsearch/message {:name "http:insert_detail-msg_id" :new "new"} :elasticsearch/doc-id "1" :elasticsearch/write-type :upsert}
+  {:elasticsearch/message {:name "http:upsert_detail-msg_id"} :elasticsearch/doc-id "2" :elasticsearch/write-type :upsert}
+  {:elasticsearch/message {:name "http:insert-to-be-deleted"} :elasticsearch/doc-id "3"}
+  {:elasticsearch/doc-id "3" :elasticsearch/write-type :delete})
 
-(onyx.api/await-job-completion peer-config (:job-id job-info))
+(run-job
+  "Native Client Job with No Default Write Type"
+  in-chan-native
+  lifecycles-native
+  catalog-native-no-write
+  {:elasticsearch/message {:name "native:insert_detail-msg_id"} :elasticsearch/doc-id "4" :elasticsearch/write-type :insert}
+  {:elasticsearch/message {:name "native:insert_detail-msg_id" :new "new"} :elasticsearch/doc-id "4" :elasticsearch/write-type :upsert}
+  {:elasticsearch/message {:name "native:upsert_detail-msg_id"} :elasticsearch/doc-id "5" :elasticsearch/write-type :upsert}
+  {:elasticsearch/message {:name "native:insert-to-be-deleted"} :elasticsearch/doc-id "6" :elasticsearch/write-type :insert}
+  {:elasticsearch/doc-id "6" :elasticsearch/write-type :delete})
 
-;; TODO: Testing!!
 (let [conn (u/connect-rest-client)]
 
-  (deftest check-insert
-    (testing "Segments successfully written to ElasticSearch via :insert"
-      (doseq [n (range n-messages)]
-        (let [res (esrd/search conn id "_default_" :query (q/term :n n))]
-          (is (= 1 (esrsp/total-hits res))))))))
+  (deftest check-http&write-job
+    (testing "Insert: plain message with no id defined"
+      (let [res (esrd/search conn id "_default_" :query (q/match :name "http:insert_plain-msg_noid"))]
+        (is (= 1 (esrsp/total-hits res)))))
+    (let [res (esrd/search conn id "_default_" :query (q/term :_id "1"))]
+      (testing "Insert: detail message with id defined"
+        (is (= 1 (esrsp/total-hits res))))
+      (testing "Update: detail message with id defined"
+        (is (= "new" (-> (esrsp/hits-from res) first :_source :new)))))
+    (testing "Upsert: detail message with id defined"
+      (let [res (esrd/search conn id "_default_" :query (q/term :_id "2"))]
+        (is (= 1 (esrsp/total-hits res)))))
+    (testing "Delete: detail defined"
+      (let [res (esrd/search conn id "_default_" :query (q/term :_id "3"))]
+        (is (= 0 (esrsp/total-hits res))))))
+
+  (deftest check-native-no-write-job
+    (let [res (esrd/search conn id "_default_" :query (q/term :_id "4"))]
+      (testing "Insert: detail message with id defined"
+        (is (= 1 (esrsp/total-hits res))))
+      (testing "Update: detail message with id defined"
+        (is (= "new" (-> (esrsp/hits-from res) first :_source :new)))))
+    (testing "Upsert: detail message with id defined"
+      (let [res (esrd/search conn id "_default_" :query (q/term :_id "5"))]
+        (is (= 1 (esrsp/total-hits res)))))
+    (testing "Delete: detail defined"
+      (let [res (esrd/search conn id "_default_" :query (q/term :_id "6"))]
+        (is (= 0 (esrsp/total-hits res)))))))
 
 (doseq [v-peer v-peers]
   (onyx.api/shutdown-peer v-peer))
