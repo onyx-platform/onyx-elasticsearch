@@ -4,12 +4,12 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :deploy-repositories {"snapshots" {:url "https://clojars.org/repo"
-                              :username :env/clojars_username
-                              :password :env/clojars_password
+                              :username :env
+                              :password :env
                               :sign-releases false}
                  "releases" {:url "https://clojars.org/repo"
-                             :username :env/clojars_username
-                             :password :env/clojars_password
+                             :username :env
+                             :password :env
                              :sign-releases false}}
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [org.onyxplatform/onyx "0.7.14"]

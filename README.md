@@ -6,6 +6,8 @@
 
 ### Installation
 
+[![Clojars Project](http://clojars.org/com.liaison/onyx-elasticsearch/latest-version.svg)](http://clojars.org/com.liaison/onyx-elasticsearch)
+
 In your project file:
 
 ```clojure
