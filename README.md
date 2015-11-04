@@ -1,10 +1,10 @@
-## onyx-elasticsearch
+# onyx-elasticsearch
 
 [Onyx](https://github.com/onyx-platform/onyx) plugin providing query and write for batch processing an ElasticSearch 1.x cluster.  For more details on ElasticSearch please read the [official documentation](https://www.elastic.co/guide/index.html).
 
 **Note on the Version Number Format**:  The first three numbers in the version correspond to the latest Onyx platform release.  The final digit increments when there are changes to the plugin within an Onyx release.
 
-#### Installation
+### Installation
 
 In your project file:
 
@@ -18,9 +18,9 @@ In your peer boot-up namespace:
 (:require [onyx.plugin.elasticsearch])
 ```
 
-#### Functions
+### Functions
 
-##### read-messages
+#### read-messages
 
 Catalog entry:
 
@@ -49,7 +49,7 @@ Lifecycle entry:
     :lifecycle/calls :onyx.plugin.elasticsearch/read-messages-calls}
 ```
 
-###### Attributes
+##### Attributes
 
 | key                         | type      | default     | description
 |-----------------------------|-----------|-------------|-------------
@@ -62,7 +62,7 @@ Lifecycle entry:
 |`:elasticsearch/mapping`     | `string`  |             | The name of the ElasticSearch mapping to search for documents in.  If not provided, all mappings will be searched.
 |`:elasticsearch/query`       | `map`     |             | A Clojure map with the same structure as an [ElasticSearch JSON Query](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-body.html).  If not provided, all documents will be returned.  
 
-##### write-messages
+#### write-messages
 
 Catalog entry:
 
@@ -99,7 +99,7 @@ Segments supplied to a write-messages task should be a Clojure map and can take 
   * `:elasticsearch/write-type`
 * If the map does NOT contain an `:elasticsearch/message` key, then the entire input segment will be treated as the document for ElasticSearch and the default settings from the catalog will be used.
 
-###### Attributes
+##### Attributes
 
 | key                         | type      | default     | description
 |-----------------------------|-----------|-------------|-------------
@@ -113,15 +113,15 @@ Segments supplied to a write-messages task should be a Clojure map and can take 
 |`:elasticsearch/doc-id`      | `string`  |             | Unique id of the document.  Required only for delete, otherwise ElasticSearch will generate a unique id if not supplied for insert/upsert operations.
 |`:elasticsearch/write-type`  | `keyword` |`:insert`    | Type of write to perform.  Should be one of `:insert`, `:upsert`, `:delete`.  The difference between `:insert` and `:upsert` is that `:insert` will fail if document already exists, while `:upsert` will update the version in ElasticSearch with the submitted document.
 
-#### Acknowledgements
+### Acknowledgements
 
 This plugin leverages the [clojurewerkz/elastisch](https://github.com/clojurewerkz/elastisch) library for all ElasticSearch communication.
 
-#### Contributing
+### Contributing
 
 Pull requests into the master branch are welcomed.
 
-#### License
+### License
 
 Copyright © 2015 Matt Anderson
 
