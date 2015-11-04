@@ -22,9 +22,16 @@
    (es/connect (str "http://" host ":" port))))
 
 (defn delete-indexes
-  "Deletes all indexes in the local Elastic Search cluster.  Used to clean up after testing."
+  "Deletes the specified index.  If no index is provided, will delete all indexes.
+  Optionally can specify the cluster host and port.  If not, will default to local.
+  Used to clean up after testing."
   ([]
     (delete-indexes "127.0.0.1" 9200))
+  ([idx]
+   (delete-indexes "127.0.0.1" 9200 idx))
   ([host port]
    (let [conn (connect-rest-client host port)]
-     (idx/delete conn))))
+     (idx/delete conn)))
+  ([host port idx]
+   (let [conn (connect-rest-client host port)]
+     (idx/delete conn idx))))

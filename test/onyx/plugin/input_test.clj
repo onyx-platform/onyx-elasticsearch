@@ -9,15 +9,7 @@
             [clojurewerkz.elastisch.rest.document :as esrd]))
 
 ;; ElasticSearch should be running locally on standard ports
-;; (http: 9200, native: 9300) prior to running the tests
-;; All indexes will be cleared before/after tests run, so use a
-;; dedicated instance without any other data.
-
-(use-fixtures
-  :once (fn [f]
-          (u/delete-indexes)
-          (f)
-          (u/delete-indexes)))
+;; (http: 9200, native: 9300) prior to running the tests.
 
 (def id (java.util.UUID/randomUUID))
 
@@ -95,8 +87,9 @@
                                      :elasticsearch/client-type :http
                                      :elasticsearch/query {:term {:foo "bar"}}}))
 
-(def catalog-http-all
+(def catalog-http-idx
   (update-in catalog-base [0] merge {:elasticsearch/port es-rest-port
+                                     :elasticsearch/index (.toString id)
                                      :elasticsearch/client-type :http}))
 
 (def catalog-native-q&map&idx
@@ -108,8 +101,8 @@
 (def catalog-native-q&all
   (update-in catalog-http-q&all [0] assoc :elasticsearch/client-type :native :elasticsearch/port es-native-port))
 
-(def catalog-native-all
-  (update-in catalog-http-all [0] assoc :elasticsearch/client-type :native :elasticsearch/port es-native-port))
+(def catalog-native-idx
+  (update-in catalog-http-idx [0] assoc :elasticsearch/client-type :native :elasticsearch/port es-native-port))
 
 (def out-chan (chan (sliding-buffer (inc n-messages))))
 
@@ -147,20 +140,24 @@
 
 (def res-http-q&map&idx (run-job catalog-http-q&map&idx))
 
-(def res-http-q&idx (run-job catalog-http-q&map&idx))
+(def res-http-q&idx (run-job catalog-http-q&idx))
 
-(def res-http-q&all (run-job catalog-http-q&map&idx))
+(def res-http-q&all (run-job catalog-http-q&all))
 
-(def res-http-all (run-job catalog-http-q&map&idx))
+(def res-http-idx (run-job catalog-http-idx))
 
-(def res-native-q&map&idx (run-job catalog-http-q&map&idx))
+(def res-native-q&map&idx (run-job catalog-native-q&map&idx))
 
-(def res-native-q&idx (run-job catalog-http-q&map&idx))
+(def res-native-q&idx (run-job catalog-native-q&idx))
 
-(def res-native-q&all (run-job catalog-http-q&map&idx))
+(def res-native-q&all (run-job catalog-native-q&all))
 
-(def res-native-all (run-job catalog-http-q&map&idx))
+(def res-native-idx (run-job catalog-native-idx))
 
+(use-fixtures
+  :once (fn [f]
+          (f)
+          (u/delete-indexes (.toString id))))
 
 (deftest catalog-http-query
   (testing "Successful Query for HTTP with Query, Map, and Index defined"
@@ -170,7 +167,7 @@
   (testing "Successful Query for HTTP with Query defined"
     (is (= "bar" (-> res-http-q&all first :_source :foo))))
   (testing "Successful Query for HTTP for all"
-    (is (= "bar" (-> res-http-all first :_source :foo)))))
+    (is (= "bar" (-> res-http-idx first :_source :foo)))))
 
 (deftest catalog-native-query
   (testing "Successful Query for Native with Query, Map, and Index defined"
@@ -180,7 +177,7 @@
   (testing "Successful Query for Native with Query defined"
     (is (= "bar" (-> res-native-q&all first :_source :foo))))
   (testing "Successful Query for Native for all"
-    (is (= "bar" (-> res-native-all first :_source :foo)))))
+    (is (= "bar" (-> res-native-idx first :_source :foo)))))
 
 (doseq [v-peer v-peers]
   (onyx.api/shutdown-peer v-peer))

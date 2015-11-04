@@ -1,6 +1,6 @@
 (ns onyx.plugin.output-test
   (:require [clojure.core.async :refer [chan >!! <!! close! sliding-buffer go <!]]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [onyx.util.helper :as u]
             [taoensso.timbre :refer [info]]
             [onyx.plugin.core-async]
@@ -12,8 +12,6 @@
 
 ;; ElasticSearch should be running locally on standard ports
 ;; (http: 9200, native: 9300) prior to running the tests
-;; All indexes will be cleared after tests run, so use a
-;; dedicated instance without any other data.
 
 (def id (str (java.util.UUID/randomUUID)))
 
@@ -154,6 +152,11 @@
   {:elasticsearch/message {:name "native:upsert_detail-msg_id"} :elasticsearch/doc-id "5" :elasticsearch/write-type :upsert}
   {:elasticsearch/message {:name "native:insert-to-be-deleted"} :elasticsearch/doc-id "6" :elasticsearch/write-type :insert}
   {:elasticsearch/doc-id "6" :elasticsearch/write-type :delete})
+
+(use-fixtures
+  :once (fn [f]
+          (f)
+          (u/delete-indexes (.toString id))))
 
 (let [conn (u/connect-rest-client)]
 
