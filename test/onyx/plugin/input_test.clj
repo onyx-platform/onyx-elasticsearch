@@ -34,7 +34,7 @@
    :onyx.messaging.aeron/embedded-driver? true
    :onyx.messaging/allow-short-circuit? false
    :onyx.messaging/impl :aeron
-   :onyx.messaging/peer-port-range [40200 40260]
+   :onyx.messaging/peer-port 40200
    :onyx.messaging/bind-addr "localhost"})
 
 (def env (onyx.api/start-env env-config))

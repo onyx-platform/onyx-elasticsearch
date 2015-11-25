@@ -36,14 +36,14 @@
    :onyx.messaging.aeron/embedded-driver? true
    :onyx.messaging/allow-short-circuit? false
    :onyx.messaging/impl :aeron
-   :onyx.messaging/peer-port-range [40200 40260]
+   :onyx.messaging/peer-port 40200
    :onyx.messaging/bind-addr "localhost"})
 
 (def env (onyx.api/start-env env-config))
 
 (def peer-group (onyx.api/start-peer-group peer-config))
 
-(def n-messages 6)
+(def n-messages 7)
 
 (def batch-size 20)
 
@@ -135,10 +135,11 @@
   in-chan-http
   lifecycles-http
   catalog-http&write
-  {:name "http:insert_plain-msg_noid"}
+  {:name "http:insert_plain-msg_noid" :index "one"}
   {:elasticsearch/message {:name "http:insert_detail-msg_id"} :elasticsearch/doc-id "1"}
   {:elasticsearch/message {:name "http:insert_detail-msg_id" :new "new"} :elasticsearch/doc-id "1" :elasticsearch/write-type :upsert}
   {:elasticsearch/message {:name "http:upsert_detail-msg_id"} :elasticsearch/doc-id "2" :elasticsearch/write-type :upsert}
+  {:elasticsearch/message {:name "http:upsert_detail-msg_noid" :index "two"} :elasticsearch/write-type :upsert}
   {:elasticsearch/message {:name "http:insert-to-be-deleted"} :elasticsearch/doc-id "3"}
   {:elasticsearch/doc-id "3" :elasticsearch/write-type :delete})
 
@@ -162,8 +163,9 @@
 
   (deftest check-http&write-job
     (testing "Insert: plain message with no id defined"
-      (let [res (esrd/search conn id "_default_" :query (q/match :name "http:insert_plain-msg_noid"))]
-        (is (= 1 (esrsp/total-hits res)))))
+      (let [res (esrd/search conn id "_default_" :query (q/match :index "one"))]
+        (is (= 1 (esrsp/total-hits res)))
+        (is (not-empty (first (esrsp/ids-from res))))))
     (let [res (esrd/search conn id "_default_" :query (q/term :_id "1"))]
       (testing "Insert: detail message with id defined"
         (is (= 1 (esrsp/total-hits res))))
@@ -172,6 +174,10 @@
     (testing "Upsert: detail message with id defined"
       (let [res (esrd/search conn id "_default_" :query (q/term :_id "2"))]
         (is (= 1 (esrsp/total-hits res)))))
+    (testing "Upsert: detail message with no id defined"
+      (let [res (esrd/search conn id "_default_" :query (q/match :index "two"))]
+        (is (= 1 (esrsp/total-hits res)))
+        (is (not-empty (first (esrsp/ids-from res))))))
     (testing "Delete: detail defined"
       (let [res (esrd/search conn id "_default_" :query (q/term :_id "3"))]
         (is (= 0 (esrsp/total-hits res))))))

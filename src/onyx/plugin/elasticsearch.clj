@@ -1,9 +1,10 @@
 (ns onyx.plugin.elasticsearch
   (:require [onyx.peer.function :as function]
+            [onyx.extensions :as extensions]
             [onyx.peer.pipeline-extensions :as p-ext]
             [onyx.static.default-vals :refer [defaults arg-or-default]]
             [onyx.types :as t]
-            [clojure.core.async :refer [chan go timeout <!! >!! alts!!]]
+            [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop]]
             [clojurewerkz.elastisch.native  :as es]
             [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.native.document]
@@ -31,17 +32,24 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- query-es
-  [client-type conn index mapping query]
-  (let [query-list (if query [:query query] [])]
+  [client-type conn index mapping query sort start-index scroll]
+  (let [query-list (if query [:query query] [])
+        sort-list (if sort [:sort sort] [])]
     (->
       (cond
-        (and index mapping) (run-as client-type :search conn index mapping query-list)
-        (not (nil? index)) (run-as client-type :search-all-types conn index query-list)
-        :else (run-as client-type :search-all-indexes-and-types conn query-list))
-      (get-in [:hits :hits]))))
+        (and index mapping) (run-as client-type :search conn index mapping query-list sort-list :from start-index :scroll scroll)
+        (not (nil? index)) (run-as client-type :search-all-types conn index query-list sort-list :from start-index :scroll scroll)
+        :else (run-as client-type :search-all-indexes-and-types conn query-list sort-list :from start-index :scroll scroll)))))
+
+(defn- start-commit-loop! [commit-ch log k]
+  (go-loop []
+    (when-let [content (<!! commit-ch)]
+      (extensions/force-write-chunk log :chunk content k)
+      (recur))))
 
 (defn inject-reader
-  [{{host :elasticsearch/host
+  [{{max-peers :onyx/max-peers
+     host :elasticsearch/host
      port :elasticsearch/port
      cluster-name :elasticsearch/cluster-name
      http-ops :elasticsearch/http-ops
@@ -49,36 +57,61 @@
      index :elasticsearch/index
      mapping :elasticsearch/mapping
      query :elasticsearch/query
+     sort :elasticsearch/sort
      :or {http-ops {}
           client-type :http}} :onyx.core/task-map
-    {ch :read-ch} :onyx.core/pipeline} _]
-  {:pre [(not (empty? host))
+    {read-ch :read-ch
+     commit-ch :commit-ch} :onyx.core/pipeline
+    log :onyx.core/log
+    task-id :onyx.core/task-id} _]
+  {:pre [(= 1 max-peers)
+         (not (empty? host))
          (and (number? port) (< 0 port 65536))
          (some #{client-type} [:http :native])
          (or (= client-type :http) (not (empty? cluster-name)))]}
-  (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-  (let [conn (create-es-client client-type host port cluster-name http-ops)
-        res (query-es client-type conn index mapping query)]
-    (if (empty? res)
-      (>!! ch (t/input (java.util.UUID/randomUUID) :done))
-      (doseq [msg (conj res :done)]
-        (>!! ch (t/input (java.util.UUID/randomUUID) msg))))
-    {:elasticsearch/connection conn
-     :elasticsearch/read-ch ch
-     :elasticsearch/doc-defaults {:elasticsearch/index index
-                                  :elasticsearch/mapping mapping
-                                  :elasticsearch/query query
-                                  :elasticsearch/client-type client-type}}))
+  (let [_ (extensions/write-chunk log :chunk {:chunk-index -1 :status :incomplete} task-id)
+        content (extensions/read-chunk log :chunk task-id)]
+    (if (= :complete (:status content))
+      (do
+        (log/warn (str "Restarted task " task-id " that was already complete.  No action will be taken."))
+        (>!! read-ch (t/input (java.util.UUID/randomUUID) :done)))
+      (do
+        (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
+        (let [_ (start-commit-loop! commit-ch log task-id)
+              conn (create-es-client client-type host port cluster-name http-ops)
+              start-index (:chunk-index content)
+              scroll-time "1m"
+              res (query-es client-type conn index mapping query sort (inc start-index) scroll-time)]
+          (loop [rs (run-as client-type :scroll-seq conn res)
+                 chunk-idx (inc start-index)]
+            (when-let [msg (first rs)]
+              (>!! read-ch (assoc (t/input (java.util.UUID/randomUUID) msg) :chunk-index chunk-idx))
+              (recur (next rs) (inc chunk-idx))))
+          (>!! read-ch (t/input (java.util.UUID/randomUUID) :done))
+          {:elasticsearch/connection conn
+           :elasticsearch/read-ch read-ch
+           :elasticsearch/doc-defaults {:elasticsearch/index index
+                                        :elasticsearch/mapping mapping
+                                        :elasticsearch/query query
+                                        :elasticsearch/client-type client-type}})))))
 
 (def read-messages-calls
   {:lifecycle/before-task-start inject-reader})
 
-(defn input-drained? [pending-messages batch]
-  (and (= 1 (count @pending-messages))
-       (= (count batch) 1)
-       (= (:message (first batch)) :done)))
+(defn- highest-acked-chunk [starting-index max-index pending-chunk-indices]
+  (loop [max-pending starting-index]
+    (if (or (pending-chunk-indices (inc max-pending))
+            (= max-index max-pending))
+      max-pending
+      (recur (inc max-pending)))))
 
-(defrecord ElasticsearchRead [max-pending batch-size batch-timeout pending-messages drained? read-ch]
+(defn- all-done? [messages]
+  (empty? (remove #(= :done (:message %))
+                  messages)))
+
+(defrecord ElasticsearchRead [max-pending batch-size batch-timeout pending-messages drained?
+                              top-chunk-index top-acked-chunk-index pending-chunk-indices
+                              read-ch commit-ch]
   p-ext/Pipeline
   (write-batch
     [_ event]
@@ -98,8 +131,15 @@
                                   result))))
                        (filter :message)))]
       (doseq [m batch]
+        (when-let [chunk-index (:chunk-index m)]
+          (swap! top-chunk-index max chunk-index)
+          (swap! pending-chunk-indices conj chunk-index))
         (swap! pending-messages assoc (:id m) m))
-      (when (input-drained? pending-messages batch)
+      (when (and (all-done? (vals @pending-messages))
+                 (all-done? batch)
+                 (or (not (empty? @pending-messages))
+                     (not (empty? batch))))
+        (>!! commit-ch {:status :complete})
         (reset! drained? true))
       {:onyx.core/batch batch}))
 
@@ -107,7 +147,12 @@
 
   p-ext/PipelineInput
   (ack-segment [_ _ segment-id]
-    (swap! pending-messages dissoc segment-id))
+    (let [chunk-index (:chunk-index (@pending-messages segment-id))]
+      (swap! pending-chunk-indices disj chunk-index)
+      (let [new-top-acked (highest-acked-chunk @top-acked-chunk-index @top-chunk-index @pending-chunk-indices)]
+        (>!! commit-ch {:chunk-index new-top-acked :status :incomplete})
+        (reset! top-acked-chunk-index new-top-acked))
+      (swap! pending-messages dissoc segment-id)))
 
   (retry-segment
     [_ _ segment-id]
@@ -132,8 +177,10 @@
         batch-timeout (arg-or-default :onyx/batch-timeout task-map)
         pending-messages (atom {})
         drained? (atom false)
-        ch (chan 1000)]
-    (->ElasticsearchRead max-pending batch-size batch-timeout pending-messages drained? ch)))
+        read-ch (chan 1000)
+        commit-ch (chan (sliding-buffer 1))]
+    (->ElasticsearchRead max-pending batch-size batch-timeout pending-messages drained?
+                         (atom -1) (atom -1) (atom #{}) read-ch commit-ch)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -144,11 +191,17 @@
   (let [client-type (:elasticsearch/client-type settings)
         index (:elasticsearch/index settings)
         mapping (:elasticsearch/mapping settings)
-        doc-id (:elasticsearch/doc-id settings)]
-    (case (:elasticsearch/write-type settings)
+        doc-id (:elasticsearch/doc-id settings)
+        write-type (if doc-id
+                     (:elasticsearch/write-type settings)
+                     (keyword (str (name (:elasticsearch/write-type settings)) "-noid")))]
+    (case write-type
       :insert (run-as client-type :create cxn index mapping doc :id doc-id)
+      :insert-noid (run-as client-type :create cxn index mapping doc)
       :upsert (run-as client-type :put cxn index mapping doc-id doc)
-      :delete (run-as client-type :delete cxn index mapping doc-id))))
+      :upsert-noid (run-as client-type :create cxn index mapping doc)
+      :delete (run-as client-type :delete cxn index mapping doc-id)
+      :default (throw (Exception. (str "Invalid write type: " write-type))))))
 
 (defn inject-writer
   [{{host :elasticsearch/host

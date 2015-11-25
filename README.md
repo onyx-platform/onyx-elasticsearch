@@ -11,7 +11,7 @@
 In your project file:
 
 ```clojure
-[com.liaison/onyx-elasticsearch "0.7.14.0"]
+[com.liaison/onyx-elasticsearch "0.8.1-alpha4.0"]
 ```
 
 In your peer boot-up namespace:
@@ -41,6 +41,7 @@ Reads documents from an ElasticSearch cluster with a specified query and submits
  :elasticsearch/index "my-index-name"
  :elasticsearch/mapping "my-mapping-name"
  :elasticsearch/query {:term {:foo "bar"}}
+ :elasticsearch/sort {:foo "desc"}
  :onyx/batch-size batch-size
  :onyx/max-peers 1
  :onyx/doc "Read documents from an ElasticSearch Query"}
@@ -60,11 +61,26 @@ Reads documents from an ElasticSearch cluster with a specified query and submits
 |`:elasticsearch/host`        | `string`  |             | ElasticSearch Host.  Required.
 |`:elasticsearch/port`        | `number`  |             | ElasticSearch Port.  Required.
 |`:elasticsearch/cluster-name`| `string`  |             | ElasticSearch Cluster Name.  Required for native connections.
-|`:elasticsearch/client-type` | `keyword` |`:http`      | Type of client to create.  Should be either `:http` or `:native`.
+|`:elasticsearch/client-type` | `keyword` | `:http`     | Type of client to create.  Should be either `:http` or `:native`.
 |`:elasticsearch/http-ops`    | `map`     |             | Additional, optional HTTP Options used by the HTTP Client for connections.  Includes any options allowed by the [clj-http library](https://github.com/dakrone/clj-http#usage).
 |`:elasticsearch/index`       | `string`  |             | The index to search for the document in.  If not provided, all indexes will be searched.
 |`:elasticsearch/mapping`     | `string`  |             | The name of the ElasticSearch mapping to search for documents in.  If not provided, all mappings will be searched.
 |`:elasticsearch/query`       | `map`     |             | A Clojure map with the same structure as an [ElasticSearch JSON Query](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-body.html).  If not provided, all documents will be returned.  
+|`:elasticsearch/sort`        | `map`     | `"_score"`  | A Clojure map with the same structure as an [ElasticSearch JSON Sort](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-sort.html).
+
+
+**Response Segment**:
+
+If the query does not match any documents, then the `:done` sentinel will be returned signaling that there is no further processing for that query.  Otherwise, the response segment will be a clojure map with data and meta-data from ElasticSearch.  An example segment resulting from a search for a document `{:foo "bar"}`:
+
+```clojure
+{:_index  "idx-id"
+ :_type   "mapping-type"
+ :_id     "doc-id"
+ :_score  0.30685282
+ :_source {:foo "bar"}}
+```
+
 
 #### write-messages
 
