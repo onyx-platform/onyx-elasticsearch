@@ -52,7 +52,7 @@ Reads documents from an ElasticSearch cluster with a specified query and submits
 
 ```clojure
 {:lifecycle/task :read-messages
-    :lifecycle/calls :onyx.plugin.elasticsearch/read-messages-calls}
+ :lifecycle/calls :onyx.plugin.elasticsearch/read-messages-calls}
 ```
 
 **Attributes**
