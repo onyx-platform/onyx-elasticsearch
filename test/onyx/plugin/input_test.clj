@@ -2,6 +2,7 @@
   (:require [clojure.core.async :refer [chan >!! <!! close! sliding-buffer timeout alts!!]]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [taoensso.timbre :refer [info]]
+            [onyx.extensions :as extensions]
             [onyx.plugin.core-async :refer [take-segments!]]
             [onyx.plugin.elasticsearch]
             [onyx.api]
@@ -13,7 +14,7 @@
 
 (def id (java.util.UUID/randomUUID))
 
-(def zk-addr "127.0.0.1:2188")
+(def zk-addr "127.0.0.1:2181")
 
 (def es-host "127.0.0.1")
 
@@ -25,7 +26,7 @@
   {:onyx/id id
    :zookeeper/address zk-addr
    :zookeeper/server? true
-   :zookeeper.server/port 2188})
+   :zookeeper.server/port 2181})
 
 (def peer-config
   {:onyx/id id
@@ -41,7 +42,7 @@
 
 (def peer-group (onyx.api/start-peer-group peer-config))
 
-(def n-messages 1)
+(def n-messages 10)
 
 (def batch-size 20)
 
@@ -120,14 +121,9 @@
    {:lifecycle/task :out
     :lifecycle/calls :onyx.plugin.core-async/writer-calls}])
 
-;; Place message in ElasticSearch index
-(let [conn (u/connect-rest-client)]
-  (esrd/create conn (.toString id) "_default_" {:foo "bar"}))
-(Thread/sleep 5000)
-
 (def v-peers (onyx.api/start-peers 2 peer-group))
 
-(defn run-job
+(defn submit-and-wait
   [catalog]
   (let [job-info (onyx.api/submit-job
                    peer-config
@@ -136,28 +132,46 @@
                     :lifecycles lifecycles
                     :task-scheduler :onyx.task-scheduler/balanced})]
     (onyx.api/await-job-completion peer-config (:job-id job-info))
-    (take-segments! out-chan 5000)))
+    job-info))
 
-(def res-http-q&map&idx (run-job catalog-http-q&map&idx))
+(defn run-job
+  [catalog]
+  (submit-and-wait catalog)
+  (take-segments! out-chan 5000))
 
-(def res-http-q&idx (run-job catalog-http-q&idx))
+(let [conn (u/connect-rest-client)]
+  (esrd/create conn (.toString id) "_default_" {:foo "bar"})
+  (Thread/sleep 5000)
 
-(def res-http-q&all (run-job catalog-http-q&all))
+  (def res-http-q&map&idx (run-job catalog-http-q&map&idx))
+  (def res-http-q&idx (run-job catalog-http-q&idx))
+  (def res-http-q&all (run-job catalog-http-q&all))
+  (def res-http-idx (run-job catalog-http-idx))
+  (def res-native-q&map&idx (run-job catalog-native-q&map&idx))
+  (def res-native-q&idx (run-job catalog-native-q&idx))
+  (def res-native-q&all (run-job catalog-native-q&all))
+  (def res-native-idx (run-job catalog-native-idx))
 
-(def res-http-idx (run-job catalog-http-idx))
+  (u/delete-indexes (.toString id))
+  (doseq [n (range n-messages)]
+    (esrd/create conn (.toString id) "_default_" {:foo "bar"} :id (str n)))
+  (Thread/sleep 5000)
 
-(def res-native-q&map&idx (run-job catalog-native-q&map&idx))
+  (let [job-info-offset (submit-and-wait catalog-http-q&map&idx)]
+    (def res-multi (take-segments! out-chan 5000))
+    (def task-chunk-offset (extensions/read-chunk (:log env) :chunk (get-in job-info-offset [:task-ids :read-messages :id]))))
 
-(def res-native-q&idx (run-job catalog-native-q&idx))
+  (let [job-info-restart (submit-and-wait (update-in catalog-http-q&map&idx [0] assoc :elasticsearch/restart-on-fail true))]
+    (def task-chunk-restart (extensions/read-chunk (:log env) :chunk (get-in job-info-restart [:task-ids :read-messages :id]))))
 
-(def res-native-q&all (run-job catalog-native-q&all))
+  (u/delete-indexes (.toString id)))
 
-(def res-native-idx (run-job catalog-native-idx))
+(doseq [v-peer v-peers]
+  (onyx.api/shutdown-peer v-peer))
 
-(use-fixtures
-  :once (fn [f]
-          (f)
-          (u/delete-indexes (.toString id))))
+(onyx.api/shutdown-peer-group peer-group)
+
+(onyx.api/shutdown-env env)
 
 (deftest catalog-http-query
   (testing "Successful Query for HTTP with Query, Map, and Index defined"
@@ -179,9 +193,10 @@
   (testing "Successful Query for Native for all"
     (is (= "bar" (-> res-native-idx first :_source :foo)))))
 
-(doseq [v-peer v-peers]
-  (onyx.api/shutdown-peer v-peer))
-
-(onyx.api/shutdown-peer-group peer-group)
-
-(onyx.api/shutdown-env env)
+(deftest fault-logic
+  (testing "Successfully processed all messages"
+    (is (= 11 (count res-multi))))
+  (testing "Successfully wrote status to log for restart-on-fail=false"
+    (is (= :complete (:status task-chunk-offset))))
+  (testing "Updates not written to log for restart-on-fail=true"
+    (is (= -1 (:chunk-index task-chunk-restart)))))

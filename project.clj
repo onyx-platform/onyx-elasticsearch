@@ -1,4 +1,4 @@
-(defproject com.liaison/onyx-elasticsearch "0.8.1-alpha4.0"
+(defproject com.liaison/onyx-elasticsearch "0.8.2.0"
   :description "Onyx plugin for Elasticsearch"
   :url "https://github.com/LiaisonTechnologies/onyx-elasticsearch"
   :license {:name "Eclipse Public License"
@@ -12,7 +12,7 @@
                              :password :env
                              :sign-releases false}}
   :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.onyxplatform/onyx "0.8.1-alpha4"]
+                 [org.onyxplatform/onyx "0.8.2"]
                  [clojurewerkz/elastisch "2.2.0-beta4"]
                  [com.taoensso/timbre "4.1.4"]]
   :profiles {:dev {:dependencies [[http-kit "2.1.19"]

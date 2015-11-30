@@ -41,10 +41,11 @@
         (not (nil? index)) (run-as client-type :search-all-types conn index query-list sort-list :from start-index :scroll scroll)
         :else (run-as client-type :search-all-indexes-and-types conn query-list sort-list :from start-index :scroll scroll)))))
 
-(defn- start-commit-loop! [commit-ch log k]
+(defn- start-commit-loop! [write-chunk? commit-ch log k]
   (go-loop []
     (when-let [content (<!! commit-ch)]
-      (extensions/force-write-chunk log :chunk content k)
+      (when write-chunk?
+        (extensions/force-write-chunk log :chunk content k))
       (recur))))
 
 (defn inject-reader
@@ -58,8 +59,11 @@
      mapping :elasticsearch/mapping
      query :elasticsearch/query
      sort :elasticsearch/sort
+     restart-on-fail :elasticsearch/restart-on-fail
      :or {http-ops {}
-          client-type :http}} :onyx.core/task-map
+          client-type :http
+          mapping "_default_"
+          sort "_doc"}} :onyx.core/task-map
     {read-ch :read-ch
      commit-ch :commit-ch} :onyx.core/pipeline
     log :onyx.core/log
@@ -68,7 +72,8 @@
          (not (empty? host))
          (and (number? port) (< 0 port 65536))
          (some #{client-type} [:http :native])
-         (or (= client-type :http) (not (empty? cluster-name)))]}
+         (or (= client-type :http) (not (empty? cluster-name)))
+         (or (or (= sort "_doc") (= sort "_score")) (not= mapping "_default_"))]}
   (let [_ (extensions/write-chunk log :chunk {:chunk-index -1 :status :incomplete} task-id)
         content (extensions/read-chunk log :chunk task-id)]
     (if (= :complete (:status content))
@@ -77,7 +82,7 @@
         (>!! read-ch (t/input (java.util.UUID/randomUUID) :done)))
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-        (let [_ (start-commit-loop! commit-ch log task-id)
+        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log task-id)
               conn (create-es-client client-type host port cluster-name http-ops)
               start-index (:chunk-index content)
               scroll-time "1m"
