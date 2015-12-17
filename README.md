@@ -11,7 +11,7 @@
 In your project file:
 
 ```clojure
-[com.liaison/onyx-elasticsearch "0.8.2.0"]
+[com.liaison/onyx-elasticsearch "0.8.3.0"]
 ```
 
 In your peer boot-up namespace:
