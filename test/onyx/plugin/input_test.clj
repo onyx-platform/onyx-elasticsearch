@@ -10,7 +10,7 @@
             [clojurewerkz.elastisch.rest.document :as esrd]))
 
 ;; ElasticSearch should be running locally on standard ports
-;; (http: 9200, native: 9300) prior to running the tests.
+;; (http: 9200, native: 9300) prior to running these tests.
 
 (def id (java.util.UUID/randomUUID))
 
