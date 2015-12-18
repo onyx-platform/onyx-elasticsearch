@@ -15,7 +15,7 @@
 
 (def id (str (java.util.UUID/randomUUID)))
 
-(def zk-addr "127.0.0.1:2188")
+(def zk-addr "127.0.0.1:2189")
 
 (def es-host "127.0.0.1")
 
@@ -27,7 +27,7 @@
   {:onyx/id id
    :zookeeper/address zk-addr
    :zookeeper/server? true
-   :zookeeper.server/port 2188})
+   :zookeeper.server/port 2189})
 
 (def peer-config 
   {:onyx/id id
