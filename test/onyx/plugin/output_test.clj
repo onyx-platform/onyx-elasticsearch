@@ -11,11 +11,11 @@
             [clojurewerkz.elastisch.rest.response :as esrsp]))
 
 ;; ElasticSearch should be running locally on standard ports
-;; (http: 9200, native: 9300) prior to running the tests
+;; (http: 9200, native: 9300) prior to running these tests
 
 (def id (str (java.util.UUID/randomUUID)))
 
-(def zk-addr "127.0.0.1:2188")
+(def zk-addr "127.0.0.1:2189")
 
 (def es-host "127.0.0.1")
 
@@ -27,7 +27,7 @@
   {:onyx/id id
    :zookeeper/address zk-addr
    :zookeeper/server? true
-   :zookeeper.server/port 2188})
+   :zookeeper.server/port 2189})
 
 (def peer-config 
   {:onyx/id id
@@ -154,6 +154,16 @@
   {:elasticsearch/message {:name "native:insert-to-be-deleted"} :elasticsearch/doc-id "6" :elasticsearch/write-type :insert}
   {:elasticsearch/doc-id "6" :elasticsearch/write-type :delete})
 
+;; Give ElasticSearch time to Update
+(Thread/sleep 7000)
+
+(doseq [v-peer v-peers]
+  (onyx.api/shutdown-peer v-peer))
+
+(onyx.api/shutdown-peer-group peer-group)
+
+(onyx.api/shutdown-env env)
+
 (use-fixtures
   :once (fn [f]
           (f)
@@ -194,10 +204,3 @@
     (testing "Delete: detail defined"
       (let [res (esrd/search conn id "_default_" :query (q/term :_id "6"))]
         (is (= 0 (esrsp/total-hits res)))))))
-
-(doseq [v-peer v-peers]
-  (onyx.api/shutdown-peer v-peer))
-
-(onyx.api/shutdown-peer-group peer-group)
-
-(onyx.api/shutdown-env env)
