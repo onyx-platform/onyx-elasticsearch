@@ -6,12 +6,10 @@
 
 ### Installation
 
-[![Clojars Project](http://clojars.org/com.liaison/onyx-elasticsearch/latest-version.svg)](http://clojars.org/com.liaison/onyx-elasticsearch)
-
 In your project file:
 
 ```clojure
-[com.liaison/onyx-elasticsearch "0.8.3.0"]
+[org.onyxplatform/onyx-elasticsearch "0.8.3.1-SNAPSHOT"]
 ```
 
 In your peer boot-up namespace:
