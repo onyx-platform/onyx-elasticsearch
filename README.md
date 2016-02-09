@@ -9,7 +9,7 @@
 In your project file:
 
 ```clojure
-[org.onyxplatform/onyx-elasticsearch "0.8.8.1-SNAPSHOT"]
+[org.onyxplatform/onyx-elasticsearch "0.8.9.1-SNAPSHOT"]
 ```
 
 In your peer boot-up namespace:
