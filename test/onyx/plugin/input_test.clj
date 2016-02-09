@@ -123,7 +123,7 @@
      (Thread/sleep 7000)
      (when (= (swap! batch-num inc) 2)
        (throw (ex-info "Restartable" {:restartable? true}))))
-   :lifecycle/handle-exception (constantly true)})
+   :lifecycle/handle-exception (constantly :restart)})
 
 (def lifecycles
   [{:lifecycle/task :read-messages
