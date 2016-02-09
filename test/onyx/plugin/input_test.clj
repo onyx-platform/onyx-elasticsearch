@@ -48,9 +48,6 @@
 
 (def workflow [[:read-messages :out]])
 
-(defn restartable? [e]
-  true)
-
 ;; Create catalogs with different search scenarios
 
 (def catalog-base
@@ -125,7 +122,8 @@
      ; since we want to ensure that the batches aren't re-read on restart for ease of testing
      (Thread/sleep 7000)
      (when (= (swap! batch-num inc) 2)
-       (throw (ex-info "Restartable" {:restartable? true}))))})
+       (throw (ex-info "Restartable" {:restartable? true}))))
+   :lifecycle/handle-exception (constantly :restart)})
 
 (def lifecycles
   [{:lifecycle/task :read-messages
@@ -192,7 +190,7 @@
   (let [job-info-restart (submit-and-wait (update-in catalog-http-q&map&idx [0] assoc :elasticsearch/restart-on-fail true))]
     (def task-chunk-restart (extensions/read-chunk (:log env) :chunk (get-in job-info-restart [:task-ids :read-messages :id]))))
 
-  (def res-multi-fail (run-job (update-in catalog-http-q&map&idx [0] assoc :onyx/restart-pred-fn ::restartable?) lifecycles-fail))
+  (def res-multi-fail (run-job catalog-http-q&map&idx lifecycles-fail))
 
   (u/delete-indexes (.toString id)))
 
