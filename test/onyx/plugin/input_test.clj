@@ -23,13 +23,13 @@
 (def es-native-port 9300)
 
 (def env-config
-  {:onyx/id id
+  {:onyx/tenancy-id id
    :zookeeper/address zk-addr
    :zookeeper/server? true
    :zookeeper.server/port 2188})
 
 (def peer-config
-  {:onyx/id id
+  {:onyx/tenancy-id id
    :zookeeper/address zk-addr
    :onyx.peer/job-scheduler :onyx.job-scheduler/greedy
    :onyx.messaging.aeron/embedded-driver? true
