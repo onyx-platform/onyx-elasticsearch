@@ -12,6 +12,8 @@ test:
 machine:
   java:
     version: oraclejdk8
+  services:
+    - docker
 
 notify:
   webhooks:
