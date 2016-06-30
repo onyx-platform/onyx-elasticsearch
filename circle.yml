@@ -2,11 +2,7 @@ dependencies:
   override:
     - echo '{:user {:plugins [[lein-voom "0.1.0-20150822_000839-g763d315"]]}}' > ~/.lein/profiles.clj
     - lein voom build-deps
-  cache_directories:
-    - elasticsearch-1.7.2
-  post:
-    - if [[ ! -e elasticsearch-1.7.2 ]]; then wget https://download.elastic.co/elasticsearch/elasticsearch/elasticsearch-1.7.2.tar.gz && tar -xvf elasticsearch-1.7.2.tar.gz; fi
-    - elasticsearch-1.7.2/bin/elasticsearch: {background: true}
+    - docker run -d -p 9200:9200 -p 9300:9300 elasticsearch:1.7.5
 
 test:
   override:
@@ -16,6 +12,8 @@ test:
 machine:
   java:
     version: oraclejdk8
+  services:
+    - docker
 
 notify:
   webhooks:
