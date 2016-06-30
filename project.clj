@@ -13,7 +13,7 @@
                              :sign-releases false}}
   :dependencies [[org.clojure/clojure "1.7.0"]
                  ^{:voom {:repo "git@github.com:onyx-platform/onyx.git" :branch "master"}}
-                 [org.onyxplatform/onyx "0.9.7-20160630_155510-gc30f775"]
+                 [org.onyxplatform/onyx "0.9.7-alpha3"]
                  [clojurewerkz/elastisch "2.2.0"]]
   :profiles {:dev {:dependencies [[http-kit "2.1.19"]
                                   [org.clojure/data.json "0.2.6"]]
