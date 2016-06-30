@@ -10,3 +10,4 @@ pom.xml.asc
 .idea
 *.iml
 *.log
+scripts/release-scripts
