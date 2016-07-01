@@ -122,7 +122,8 @@
      ; since we want to ensure that the batches aren't re-read on restart for ease of testing
      (Thread/sleep 7000)
      (when (= (swap! batch-num inc) 2)
-       (throw (ex-info "Restartable" {:restartable? true}))))
+       (throw (ex-info "Restartable" {:restartable? true})))
+     {})
    :lifecycle/handle-exception (constantly :restart)})
 
 (def lifecycles
