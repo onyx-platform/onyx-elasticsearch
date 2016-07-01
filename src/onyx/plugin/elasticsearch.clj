@@ -79,7 +79,8 @@
     (if (= :complete (:status content))
       (do
         (log/warn (str "Restarted task " task-id " that was already complete.  No action will be taken."))
-        (>!! read-ch (t/input (java.util.UUID/randomUUID) :done)))
+        (>!! read-ch (t/input (java.util.UUID/randomUUID) :done))
+        {})
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
         (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log task-id)
