@@ -185,10 +185,10 @@
 
   (let [job-info-offset (submit-and-wait catalog-http-q&map&idx)]
     (def res-multi (take-segments! out-chan 5000))
-    (def task-chunk-offset (extensions/read-chunk (:log env) :chunk (get-in job-info-offset [:task-ids :read-messages :id]))))
+    (def task-chunk-offset (extensions/read-chunk (:log env) :chunk :read-messages)))
 
   (let [job-info-restart (submit-and-wait (update-in catalog-http-q&map&idx [0] assoc :elasticsearch/restart-on-fail true))]
-    (def task-chunk-restart (extensions/read-chunk (:log env) :chunk (get-in job-info-restart [:task-ids :read-messages :id]))))
+    (def task-chunk-restart (extensions/read-chunk (:log env) :chunk :read-messages)))
 
   (def res-multi-fail (run-job catalog-http-q&map&idx lifecycles-fail))
 
