@@ -1,6 +1,7 @@
 (ns onyx.plugin.input-test
   (:require [clojure.core.async :refer [chan >!! <!! close! sliding-buffer timeout alts!!]]
             [clojure.test :refer [deftest is testing use-fixtures]]
+            [onyx.test-helper :refer [with-test-env]]
             [taoensso.timbre :refer [info]]
             [onyx.extensions :as extensions]
             [onyx.plugin.core-async :refer [take-segments!]]
@@ -38,10 +39,6 @@
    :onyx.messaging/peer-port 40200
    :onyx.messaging/bind-addr "localhost"})
 
-(def env (onyx.api/start-env env-config))
-
-(def peer-group (onyx.api/start-peer-group peer-config))
-
 (def n-messages 10)
 
 (def batch-size 20)
@@ -58,7 +55,7 @@
     :elasticsearch/host es-host
     :elasticsearch/cluster-name (u/es-cluster-name)
     :elasticsearch/http-ops {}
-    :onyx/batch-size batch-size
+    :onyx/batch-size 1
     :onyx/max-peers 1
     :onyx/doc "Read messages from an ElasticSearch Query"}
 
@@ -105,10 +102,10 @@
 (def catalog-native-idx
   (update-in catalog-http-idx [0] assoc :elasticsearch/client-type :native :elasticsearch/port es-native-port))
 
-(def out-chan (chan (sliding-buffer (inc n-messages))))
+(def out-chan (atom nil))
 
 (defn inject-out-ch [event lifecycle]
-  {:core.async/chan out-chan})
+  {:core.async/chan @out-chan})
 
 (def out-calls
   {:lifecycle/before-task-start inject-out-ch})
@@ -118,11 +115,12 @@
 (def read-crash
   {:lifecycle/before-batch
    (fn [event lifecycle]
-     ; give the peer a bit of time to write the chunks out and ack the batches,
-     ; since we want to ensure that the batches aren't re-read on restart for ease of testing
+     ;; give the peer a bit of time to write the chunks out and ack the batches,
+     ;; since we want to ensure that the batches aren't re-read on restart for ease of testing
      (Thread/sleep 7000)
      (when (= (swap! batch-num inc) 2)
-       (throw (ex-info "Restartable" {:restartable? true}))))
+       (throw (ex-info "Restartable" {:restartable? true})))
+     {})
    :lifecycle/handle-exception (constantly :restart)})
 
 (def lifecycles
@@ -143,90 +141,151 @@
    {:lifecycle/task :out
     :lifecycle/calls :onyx.plugin.core-async/writer-calls}])
 
-(def v-peers (onyx.api/start-peers 2 peer-group))
-
-(defn submit-and-wait
-  ([catalog]
-   (submit-and-wait catalog lifecycles))
-  ([catalog lc]
-   (let [job-info (onyx.api/submit-job
-                    peer-config
-                    {:catalog catalog
-                     :workflow workflow
-                     :lifecycles lc
-                     :task-scheduler :onyx.task-scheduler/balanced})]
-     (onyx.api/await-job-completion peer-config (:job-id job-info))
-     job-info)))
-
-(defn run-job
-  ([catalog]
-   (run-job catalog lifecycles))
-  ([catalog lc]
-   (submit-and-wait catalog lc)
-   (take-segments! out-chan 5000)))
-
-(let [conn (u/connect-rest-client)]
+(deftest native-test
+  (def conn (u/connect-rest-client))
   (esrd/create conn (.toString id) "_default_" {:foo "bar"})
   (Thread/sleep 5000)
 
-  (def res-http-q&map&idx (run-job catalog-http-q&map&idx))
-  (def res-http-q&idx (run-job catalog-http-q&idx))
-  (def res-http-q&all (run-job catalog-http-q&all))
-  (def res-http-idx (run-job catalog-http-idx))
-  (def res-native-q&map&idx (run-job catalog-native-q&map&idx))
-  (def res-native-q&idx (run-job catalog-native-q&idx))
-  (def res-native-q&all (run-job catalog-native-q&all))
-  (def res-native-idx (run-job catalog-native-idx))
+  (testing "Successful Query for Native with Query and Index defined"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-native-q&idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo)))))))
 
+
+  (testing "Successful Query for Native with Query, Map, and Index defined"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-native-q&map&idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo)))))))
+
+  (testing "Successful Query for Native with Query defined"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-native-q&all
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo)))))))
+
+  (testing "Successful Query for Native for all"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-native-idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo))))))))
+
+(deftest http-test
+  (def conn (u/connect-rest-client))
+  (esrd/create conn (.toString id) "_default_" {:foo "bar"})
+  (Thread/sleep 5000)
+
+  (testing "Successful Query for HTTP with Query, Map, and Index defined"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-http-q&map&idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo)))))))
+
+    (testing "Successful Query for HTTP with Query and Index defined"
+      (with-test-env [test-env [2 env-config peer-config]]
+        (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+        (let [job {:catalog catalog-http-q&idx
+                   :workflow workflow
+                   :lifecycles lifecycles
+                   :task-scheduler :onyx.task-scheduler/balanced}
+              {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+          (onyx.api/await-job-completion peer-config job-id)
+          (let [result (take-segments! @out-chan 5000)]
+            (is (= "bar" (-> result first :_source :foo)))))))
+
+  (testing "Successful Query for HTTP with Query defined"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-http-q&all
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo)))))))
+
+  (testing "Successful Query for HTTP for all"
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-http-idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= "bar" (-> result first :_source :foo))))))))
+
+(deftest fault-logic
   (u/delete-indexes (.toString id))
   (doseq [n (range n-messages)]
     (esrd/create conn (.toString id) "_default_" {:foo "bar"} :id (str n)))
   (Thread/sleep 5000)
 
-  (let [job-info-offset (submit-and-wait catalog-http-q&map&idx)]
-    (def res-multi (take-segments! out-chan 5000))
-    (def task-chunk-offset (extensions/read-chunk (:log env) :chunk :read-messages)))
-
-  (let [job-info-restart (submit-and-wait (update-in catalog-http-q&map&idx [0] assoc :elasticsearch/restart-on-fail true))]
-    (def task-chunk-restart (extensions/read-chunk (:log env) :chunk :read-messages)))
-
-  (def res-multi-fail (run-job catalog-http-q&map&idx lifecycles-fail))
-
-  (u/delete-indexes (.toString id)))
-
-(doseq [v-peer v-peers]
-  (onyx.api/shutdown-peer v-peer))
-
-(onyx.api/shutdown-peer-group peer-group)
-
-(onyx.api/shutdown-env env)
-
-(deftest catalog-http-query
-  (testing "Successful Query for HTTP with Query, Map, and Index defined"
-    (is (= "bar" (-> res-http-q&map&idx first :_source :foo))))
-  (testing "Successful Query for HTTP with Query and Index defined"
-    (is (= "bar" (-> res-http-q&idx first :_source :foo))))
-  (testing "Successful Query for HTTP with Query defined"
-    (is (= "bar" (-> res-http-q&all first :_source :foo))))
-  (testing "Successful Query for HTTP for all"
-    (is (= "bar" (-> res-http-idx first :_source :foo)))))
-
-(deftest catalog-native-query
-  (testing "Successful Query for Native with Query, Map, and Index defined"
-    (is (= "bar" (-> res-native-q&map&idx first :_source :foo))))
-  (testing "Successful Query for Native with Query and Index defined"
-    (is (= "bar" (-> res-native-q&idx first :_source :foo))))
-  (testing "Successful Query for Native with Query defined"
-    (is (= "bar" (-> res-native-q&all first :_source :foo))))
-  (testing "Successful Query for Native for all"
-    (is (= "bar" (-> res-native-idx first :_source :foo)))))
-
-(deftest fault-logic
   (testing "Successfully processed all messages no failure"
-    (is (= 11 (count res-multi))))
-  (testing "Successfully wrote status to log for restart-on-fail=false"
-    (is (= :complete (:status task-chunk-offset))))
-  (testing "Updates not written to log for restart-on-fail=true"
-    (is (= -1 (:chunk-index task-chunk-restart))))
-  (testing "Successfully processed all messages with failure"
-    (is (= 11 (count res-multi-fail)))))
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-http-q&map&idx
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)
+              task-chunk-offset (extensions/read-chunk (:log (:env test-env)) :chunk (str job-id "#" :read-messages))]
+          (is (= 11 (count result)))
+          (is (= :complete (:status task-chunk-offset))))))
+
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog (update-in catalog-http-q&map&idx [0] assoc :elasticsearch/restart-on-fail true)
+                 :workflow workflow
+                 :lifecycles lifecycles
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [task-chunk-restart (extensions/read-chunk (:log (:env test-env)) :chunk (str job-id "#" :read-messages))]
+          (is (= -1 (:chunk-index task-chunk-restart))))))
+
+    (with-test-env [test-env [2 env-config peer-config]]
+      (reset! out-chan (chan (sliding-buffer (inc n-messages))))
+      (let [job {:catalog catalog-http-q&map&idx
+                 :workflow workflow
+                 :lifecycles lifecycles-fail
+                 :task-scheduler :onyx.task-scheduler/balanced}
+            {:keys [job-id]} (onyx.api/submit-job peer-config job)]
+        (onyx.api/await-job-completion peer-config job-id)
+        (let [result (take-segments! @out-chan 5000)]
+          (is (= 11 (count result))))))))
