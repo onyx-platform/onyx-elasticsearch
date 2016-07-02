@@ -4,7 +4,7 @@
             [onyx.peer.pipeline-extensions :as p-ext]
             [onyx.static.default-vals :refer [defaults arg-or-default]]
             [onyx.types :as t]
-            [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop close! poll!]]
+            [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop close! poll! offer!]]
             [clojurewerkz.elastisch.native  :as es]
             [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.native.document]
@@ -94,7 +94,8 @@
           (loop [rs (run-as client-type :scroll-seq conn res)
                  chunk-idx (inc start-index)]
             (when-let [msg (first rs)]
-              (>!! read-ch (assoc (t/input (java.util.UUID/randomUUID) msg) :chunk-index chunk-idx))
+              (when-not (offer! read-ch (assoc (t/input (java.util.UUID/randomUUID) msg) :chunk-index chunk-idx))
+                (throw (ex-info "Error placing message onto read-ch, which has static size. To be fixed in a future release: https://github.com/onyx-platform/onyx-elasticsearch/issues/1" {})))
               (recur (next rs) (inc chunk-idx))))
           (>!! read-ch (t/input (java.util.UUID/randomUUID) :done))
           {:elasticsearch/connection conn
@@ -197,7 +198,7 @@
         batch-timeout (arg-or-default :onyx/batch-timeout task-map)
         pending-messages (atom {})
         drained? (atom false)
-        read-ch (chan 1000)
+        read-ch (chan 10000)
         retry-ch (chan (* 2 max-pending))
         commit-ch (chan (sliding-buffer 1))]
     (->ElasticsearchRead max-pending batch-size batch-timeout pending-messages drained?
