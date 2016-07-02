@@ -67,6 +67,7 @@
     {read-ch :read-ch
      commit-ch :commit-ch} :onyx.core/pipeline
     log :onyx.core/log
+    job-id :onyx.core/job-id
     task-id :onyx.core/task-id} _]
   {:pre [(= 1 max-peers)
          (not (empty? host))
@@ -80,10 +81,14 @@
       (do
         (log/warn (str "Restarted task " task-id " that was already complete.  No action will be taken."))
         (>!! read-ch (t/input (java.util.UUID/randomUUID) :done))
-        {})
+        {:elasticsearch/read-ch read-ch
+         :elasticsearch/doc-defaults {:elasticsearch/index index
+                                      :elasticsearch/mapping mapping
+                                      :elasticsearch/query query
+                                      :elasticsearch/client-type client-type}})
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log task-id)
+        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log (str job-id "-" task-id))
               conn (create-es-client client-type host port cluster-name http-ops)
               start-index (:chunk-index content)
               scroll-time "1m"
