@@ -4,7 +4,7 @@
             [onyx.peer.pipeline-extensions :as p-ext]
             [onyx.static.default-vals :refer [defaults arg-or-default]]
             [onyx.types :as t]
-            [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop]]
+            [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop close! poll!]]
             [clojurewerkz.elastisch.native  :as es]
             [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.native.document]
@@ -65,6 +65,7 @@
           mapping "_default_"
           sort "_doc"}} :onyx.core/task-map
     {read-ch :read-ch
+     retry-ch :retry-ch
      commit-ch :commit-ch} :onyx.core/pipeline
     log :onyx.core/log
     job-id :onyx.core/job-id
@@ -75,8 +76,9 @@
          (some #{client-type} [:http :native])
          (or (= client-type :http) (not (empty? cluster-name)))
          (or (or (= sort "_doc") (= sort "_score")) (not= mapping "_default_"))]}
-  (let [_ (extensions/write-chunk log :chunk {:chunk-index -1 :status :incomplete} task-id)
-        content (extensions/read-chunk log :chunk task-id)]
+  (let [job-task-id  (str job-id "#" task-id)
+        _ (extensions/write-chunk log :chunk {:chunk-index -1 :status :incomplete} job-task-id)
+        content (extensions/read-chunk log :chunk job-task-id)]
     (if (= :complete (:status content))
       (do
         (log/warn (str "Restarted task " task-id " that was already complete.  No action will be taken."))
@@ -84,7 +86,7 @@
         {})
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log task-id)
+        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log job-task-id)
               conn (create-es-client client-type host port cluster-name http-ops)
               start-index (:chunk-index content)
               scroll-time "1m"
@@ -97,13 +99,25 @@
           (>!! read-ch (t/input (java.util.UUID/randomUUID) :done))
           {:elasticsearch/connection conn
            :elasticsearch/read-ch read-ch
+           :elasticsearch/retry-ch retry-ch
+           :elasticsearch/commit-ch commit-ch
            :elasticsearch/doc-defaults {:elasticsearch/index index
                                         :elasticsearch/mapping mapping
                                         :elasticsearch/query query
                                         :elasticsearch/client-type client-type}})))))
 
+(defn close-read-resources
+  [{:keys [elasticsearch/producer-ch elasticsearch/commit-ch elasticsearch/read-ch elasticsearch/retry-ch] :as event} lifecycle]
+  (close! read-ch)
+  (close! retry-ch)
+  (while (poll! read-ch))
+  (while (poll! retry-ch))
+  (close! commit-ch)
+  {})
+
 (def read-messages-calls
-  {:lifecycle/before-task-start inject-reader})
+  {:lifecycle/before-task-start inject-reader
+   :lifecycle/after-task-stop close-read-resources})
 
 (defn- highest-acked-chunk [starting-index max-index pending-chunk-indices]
   (loop [max-pending starting-index]
@@ -118,7 +132,7 @@
 
 (defrecord ElasticsearchRead [max-pending batch-size batch-timeout pending-messages drained?
                               top-chunk-index top-acked-chunk-index pending-chunk-indices
-                              read-ch commit-ch]
+                              read-ch retry-ch commit-ch]
   p-ext/Pipeline
   (write-batch
     [_ event]
@@ -131,12 +145,9 @@
           batch (if (zero? max-segments)
                   (<!! timeout-ch)
                   (->> (range max-segments)
-                       (map (fn [_]
-                              (let [result (first (alts!! [read-ch timeout-ch] :priority true))]
-                                (if (= (:message result) :done)
-                                  (t/input (java.util.UUID/randomUUID) :done)
-                                  result))))
-                       (filter :message)))]
+                       (keep (fn [_]
+                               (let [[result ch] (alts!! [retry-ch read-ch timeout-ch] :priority true)]
+                                 result)))))]
       (doseq [m batch]
         (when-let [chunk-index (:chunk-index m)]
           (swap! top-chunk-index max chunk-index)
@@ -144,6 +155,8 @@
         (swap! pending-messages assoc (:id m) m))
       (when (and (all-done? (vals @pending-messages))
                  (all-done? batch)
+                 (zero? (count (.buf read-ch)))
+                 (zero? (count (.buf retry-ch)))
                  (or (not (empty? @pending-messages))
                      (not (empty? batch))))
         (>!! commit-ch {:status :complete})
@@ -165,8 +178,8 @@
     [_ _ segment-id]
     (when-let [msg (get @pending-messages segment-id)]
       (swap! pending-messages dissoc segment-id)
-      (>!! read-ch (t/input (java.util.UUID/randomUUID)
-                            (:message msg)))))
+      (>!! retry-ch (t/input (java.util.UUID/randomUUID)
+                             (:message msg)))))
 
   (pending?
     [_ _ segment-id]
@@ -185,9 +198,10 @@
         pending-messages (atom {})
         drained? (atom false)
         read-ch (chan 1000)
+        retry-ch (chan (* 2 max-pending))
         commit-ch (chan (sliding-buffer 1))]
     (->ElasticsearchRead max-pending batch-size batch-timeout pending-messages drained?
-                         (atom -1) (atom -1) (atom #{}) read-ch commit-ch)))
+                         (atom -1) (atom -1) (atom #{}) read-ch retry-ch commit-ch)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
