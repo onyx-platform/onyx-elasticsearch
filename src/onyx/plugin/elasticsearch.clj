@@ -84,7 +84,7 @@
         {})
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log (str job-id "-" task-id))
+        (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log task-id)
               conn (create-es-client client-type host port cluster-name http-ops)
               start-index (:chunk-index content)
               scroll-time "1m"
