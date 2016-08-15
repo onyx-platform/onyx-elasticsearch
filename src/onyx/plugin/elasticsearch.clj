@@ -16,10 +16,10 @@
   (some true? (map #(contains? col %) keys)))
 
 (defn- create-es-client
-  [client-type host port cluster-name http-ops]
+  [client-type protocol host port cluster-name http-ops]
   (if
     (= client-type :http)
-    (esr/connect (str "http://" host ":" port) http-ops)
+    (esr/connect (str (name protocol) "://" host ":" port) http-ops)
     (es/connect [[host port]] {"cluster.name" cluster-name})))
 
 (defn- run-as
@@ -50,6 +50,7 @@
 
 (defn inject-reader
   [{{max-peers :onyx/max-peers
+     protocol :elasticsearch/protocol
      host :elasticsearch/host
      port :elasticsearch/port
      cluster-name :elasticsearch/cluster-name
@@ -61,6 +62,7 @@
      sort :elasticsearch/sort
      restart-on-fail :elasticsearch/restart-on-fail
      :or {http-ops {}
+          protocol :http
           client-type :http
           mapping "_default_"
           sort "_doc"}} :onyx.core/task-map
@@ -87,7 +89,7 @@
       (do
         (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
         (let [_ (start-commit-loop! (not restart-on-fail) commit-ch log job-task-id)
-              conn (create-es-client client-type host port cluster-name http-ops)
+              conn (create-es-client client-type protocol host port cluster-name http-ops)
               start-index (:chunk-index content)
               scroll-time "1m"
               res (query-es client-type conn index mapping query sort (inc start-index) scroll-time)]
@@ -226,7 +228,8 @@
       :default (throw (Exception. (str "Invalid write type: " write-type))))))
 
 (defn inject-writer
-  [{{host :elasticsearch/host
+  [{{protocol :elasticsearch/protocol
+     host :elasticsearch/host
      port :elasticsearch/port
      cluster-name :elasticsearch/cluster-name
      http-ops :elasticsearch/http-ops
@@ -236,6 +239,7 @@
      mapping :elasticsearch/mapping
      write-type :elasticsearch/write-type
      :or {http-ops {}
+          protocol :http
           client-type :http
           mapping "_default_"
           write-type :insert}} :onyx.core/task-map} _]
@@ -246,7 +250,7 @@
          (some #{write-type} [:insert :upsert :delete])
          (or (not= write-type :delete) (not (empty? doc-id)))]}
   (log/info (str "Creating ElasticSearch " client-type " client for " host ":" port))
-  {:elasticsearch/connection (create-es-client client-type host port cluster-name http-ops)
+  {:elasticsearch/connection (create-es-client client-type protocol host port cluster-name http-ops)
    :elasticsearch/doc-defaults {:elasticsearch/index index
                                 :elasticsearch/doc-id doc-id
                                 :elasticsearch/mapping mapping

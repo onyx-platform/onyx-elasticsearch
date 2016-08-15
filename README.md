@@ -59,6 +59,7 @@ Reads documents from an ElasticSearch cluster with a specified query and submits
 |--------------------------------|-----------|-------------|-------------
 |`:elasticsearch/host`           | `string`  |             | ElasticSearch Host.  Required.
 |`:elasticsearch/port`           | `number`  |             | ElasticSearch Port.  Required.
+|`:elasticsearch/protocol`       | `keyword` | `:http`     | Protocol to use when connecting to ElasticSearch. Should be either `:http` or `:https`. Only applies when using `:client-type` of `:http`.
 |`:elasticsearch/cluster-name`   | `string`  |             | ElasticSearch Cluster Name.  Required for native connections.
 |`:elasticsearch/client-type`    | `keyword` | `:http`     | Type of client to create.  Should be either `:http` or `:native`.
 |`:elasticsearch/http-ops`       | `map`     |             | Additional, optional HTTP Options used by the HTTP Client for connections.  Includes any options allowed by the [clj-http library](https://github.com/dakrone/clj-http#usage).
