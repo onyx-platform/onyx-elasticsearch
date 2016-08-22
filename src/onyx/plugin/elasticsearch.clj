@@ -2,7 +2,7 @@
   (:require [onyx.peer.function :as function]
             [onyx.extensions :as extensions]
             [onyx.peer.pipeline-extensions :as p-ext]
-            [onyx.static.default-vals :refer [defaults arg-or-default]]
+            [onyx.static.default-vals :refer [default-vals arg-or-default]]
             [onyx.types :as t]
             [clojure.core.async :refer [chan go timeout <!! >!! alts!! sliding-buffer go-loop close! poll! offer!]]
             [clojurewerkz.elastisch.native  :as es]
@@ -18,7 +18,7 @@
 (defn- create-es-client
   [client-type protocol host port cluster-name http-ops]
   (if
-    (= client-type :http)
+      (= client-type :http)
     (esr/connect (str (name protocol) "://" host ":" port) http-ops)
     (es/connect [[host port]] {"cluster.name" cluster-name})))
 
@@ -36,10 +36,10 @@
   (let [query-list (if query [:query query] [])
         sort-list (if sort [:sort sort] [])]
     (->
-      (cond
-        (and index mapping) (run-as client-type :search conn index mapping query-list sort-list :from start-index :scroll scroll)
-        (not (nil? index)) (run-as client-type :search-all-types conn index query-list sort-list :from start-index :scroll scroll)
-        :else (run-as client-type :search-all-indexes-and-types conn query-list sort-list :from start-index :scroll scroll)))))
+     (cond
+       (and index mapping) (run-as client-type :search conn index mapping query-list sort-list :from start-index :scroll scroll)
+       (not (nil? index)) (run-as client-type :search-all-types conn index query-list sort-list :from start-index :scroll scroll)
+       :else (run-as client-type :search-all-indexes-and-types conn query-list sort-list :from start-index :scroll scroll)))))
 
 (defn- start-commit-loop! [write-chunk? commit-ch log k]
   (go-loop []
@@ -138,7 +138,7 @@
                               read-ch retry-ch commit-ch]
   p-ext/Pipeline
   (write-batch
-    [_ event]
+      [_ event]
     (function/write-batch event))
 
   (read-batch [_ _]
@@ -178,18 +178,18 @@
       (swap! pending-messages dissoc segment-id)))
 
   (retry-segment
-    [_ _ segment-id]
+      [_ _ segment-id]
     (when-let [msg (get @pending-messages segment-id)]
       (swap! pending-messages dissoc segment-id)
       (>!! retry-ch (t/input (java.util.UUID/randomUUID)
                              (:message msg)))))
 
   (pending?
-    [_ _ segment-id]
+      [_ _ segment-id]
     (get @pending-messages segment-id))
 
   (drained?
-    [_ _]
+      [_ _]
     @drained?))
 
 (defn read-messages
@@ -263,30 +263,30 @@
 (defrecord ElasticsearchWrite []
   p-ext/Pipeline
   (read-batch
-    [_ event]
+      [_ event]
     (function/read-batch event))
 
   (write-batch
-    [_ {results :onyx.core/results
-        connection :elasticsearch/connection
-        defaults :elasticsearch/doc-defaults}]
+      [_ {results :onyx.core/results
+          connection :elasticsearch/connection
+          default-vals :elasticsearch/doc-defaults}]
     (doseq [msg (mapcat :leaves (:tree results))]
       (let [document (or (:elasticsearch/message (:message msg)) (:message msg))
             settings (if
-                       (or (= :delete (:elasticsearch/write-type defaults))
-                           (contains-some? (:message msg) :elasticsearch/message :elasticsearch/write-type))
-                       (merge defaults (select-keys
-                                         (:message msg) [:elasticsearch/index
-                                                         :elasticsearch/doc-id
-                                                         :elasticsearch/mapping
-                                                         :elasticsearch/write-type]))
-                       defaults)]
+                         (or (= :delete (:elasticsearch/write-type default-vals))
+                             (contains-some? (:message msg) :elasticsearch/message :elasticsearch/write-type))
+                       (merge default-vals (select-keys
+                                            (:message msg) [:elasticsearch/index
+                                                            :elasticsearch/doc-id
+                                                            :elasticsearch/mapping
+                                                            :elasticsearch/write-type]))
+                       default-vals)]
         (log/debug (str "Message Settings: " settings))
         (write-elasticsearch connection document settings)))
     {})
 
   (seal-resource
-    [_ _]
+      [_ _]
     {}))
 
 (defn write-messages [_]
