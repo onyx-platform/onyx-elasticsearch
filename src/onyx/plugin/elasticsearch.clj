@@ -222,7 +222,7 @@
     (case write-type
       :insert (run-as client-type :create cxn index mapping doc :id doc-id)
       :insert-noid (run-as client-type :create cxn index mapping doc)
-      :upsert (run-as client-type :put cxn index mapping doc-id doc)
+      :upsert (run-as client-type :upsert cxn index mapping doc-id doc)
       :upsert-noid (run-as client-type :create cxn index mapping doc)
       :delete (run-as client-type :delete cxn index mapping doc-id)
       :default (throw (Exception. (str "Invalid write type: " write-type))))))
