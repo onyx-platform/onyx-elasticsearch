@@ -44,7 +44,7 @@
                 :elasticsearch/message]} options]
     {:url (cond-> [index mapping-type] (some? id) (conj id) (= :update write-type) (conj :_update))
      :method (rest-method write-type id)
-     :body (or message {})}))
+     :body (if (= :update write-type) {:doc (or message {})} (or message {}))}))
 
 (defrecord ElasticSearchWriter []
   p/Plugin

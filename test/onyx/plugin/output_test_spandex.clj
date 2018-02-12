@@ -124,6 +124,11 @@
     :elasticsearch/index test-index
     :elasticsearch/mapping-type :group
     :elasticsearch/write-type :index
+    :elasticsearch/id "1"}
+   {:elasticsearch/message {:name "http:insert_detail-msg_id" :new "new"}
+    :elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :update
     :elasticsearch/id "1"}])
 
 (defn index-documents []
@@ -146,6 +151,9 @@
   (let [client (spdx/client {:hosts [(str "http://" es-host ":" es-rest-port)]})]
     (spdx/request client {:url [index] :method :delete})))
 
+(defn- search [client body]
+  (spdx/request client {:url [test-index :group :_search] :method :get :body body}))
+
 (use-fixtures :once (fn [f]
                       (index-documents)
                       (f)
@@ -155,6 +163,11 @@
 
   (deftest check-http&write-job
     (testing "Insert: plain message with no id defined"
-      (let [{:keys [:body]} (spdx/request client {:url [test-index :group :_search] :method :get :body {:query {:match {:index "one"}}}})]
+      (let [{:keys [:body]} (search client {:query {:match {:index "one"}}})]
         (is (= 1 (get-in body [:hits :total])))
-        (is (not-empty (first (get-in body [:hits :hits]))))))))
+        (is (not-empty (first (get-in body [:hits :hits]))))))
+    (let [{:keys [:body]} (search client {:query {:match {:_id "1"}}})]
+        (testing "Insert: detail message with id defined"
+          (is (= 1 (get-in body [:hits :total]))))
+        (testing "Update: detail message with id defined"
+          (is (= "new" (get-in (first (get-in body [:hits :hits])) [:_source :new])))))))
