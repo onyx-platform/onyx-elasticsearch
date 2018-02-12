@@ -1,39 +1,50 @@
 (ns onyx.plugin.spandex-elasticsearch
   (:require [onyx.plugin.protocols :as p]
+            [onyx.static.default-vals :refer [default-vals arg-or-default]]
             [taoensso.timbre :as log]
             [qbits.spandex :as sp]
             [schema.core :as s]))
 
-(defn rest-method
-  [write-type]
+(defn- rest-method
+  [write-type id]
   (case write-type
-    :create :put
+    :index  (if (some? id) :put :post)
     :update :post
     :delete :delete
     (throw (Exception. (str "Invalid write type: " write-type)))))
 
-(def elastic-write-request {:elasticsearch/host s/Str
-                            :elasticsearch/port s/Num
-                            :elasticsearch/index s/Keyword
-                            :elasticsearch/mapping-type s/Keyword
-                            :elasticsearch/write-type s/Keyword
-                            (s/optional-key :elasticsearch/id) s/Any
-                            :elasticsearch/message {}})
+(def base-write-request {:elasticsearch/index s/Keyword
+                         :elasticsearch/mapping-type s/Keyword
+                         :elasticsearch/write-type s/Keyword})
+
+(def index-request (merge base-write-request {(s/optional-key :elasticsearch/id) s/Any
+                                               :elasticsearch/message {s/Keyword s/Any}}))
+
+(def update-request (merge base-write-request {:elasticsearch/id s/Any
+                                               :elasticsearch/message {s/Keyword s/Any}}))
+
+(def delete-request (merge base-write-request {:elasticsearch/id s/Any}))
+
+(defn- validation-schema
+  [{write-type :elasticsearch/write-type}]
+  (case write-type
+    :index  index-request
+    :update update-request
+    :delete delete-request
+    (throw (Exception. (str "Invalid write type: " write-type)))))
 
 (s/defn rest-request
   "Takes in a settings map and returns a REST request to send to the spandex client."
   [options]
-  (s/validate elastic-write-request options)
-  (let [{:keys [:elasticsearch/host
-                :elasticsearch/port
-                :elasticsearch/index
+  (s/validate (validation-schema options) options)
+  (let [{:keys [:elasticsearch/index
                 :elasticsearch/mapping-type
                 :elasticsearch/write-type
                 :elasticsearch/id
                 :elasticsearch/message]} options]
-    {:url (cond-> [index mapping-type] (some? id) (conj id))
-     :method (rest-method write-type)
-     :body message}))
+    {:url (cond-> [index mapping-type] (some? id) (conj id) (= :update write-type) (conj :_update))
+     :method (rest-method write-type id)
+     :body (or message {})}))
 
 (defrecord ElasticSearchWriter []
   p/Plugin
@@ -56,7 +67,7 @@
   (write-batch 
     [this {:keys [onyx.core/write-batch elasticsearch/connection]} replica messenger]
     (doseq [event write-batch]
-      (sp/request connection event))
+      (sp/request connection (rest-request event)))
     true))
 
 (defn output [event]

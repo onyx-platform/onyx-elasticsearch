@@ -1,5 +1,5 @@
 (ns onyx.plugin.output-test-spandex
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [onyx.plugin.spandex-elasticsearch :as e]
             [onyx.plugin.core-async :refer [take-segments!]]
             [onyx.plugin.seq]
@@ -11,7 +11,8 @@
             [onyx.tasks.function]
             [onyx.tasks.elasticsearch]
             [onyx.static.uuid :refer [random-uuid]]
-            [onyx.test-helper :refer [with-test-env]]))
+            [onyx.test-helper :refer [with-test-env]]
+            [qbits.spandex :as spdx]))
 
 (def id (java.util.UUID/randomUUID))
 
@@ -65,32 +66,12 @@
     :onyx/max-peers 1
     :onyx/doc "Writes documents to elasticsearch"}])
 
-(defn windowed-task
-  [task-name opts sync-fn]
-  {:task {:task-map (merge {:onyx/name task-name
-                            :onyx/type :function
-                            :onyx/fn :clojure.core/identity
-                            :onyx/max-peers 1}
-                           opts)
-          :windows [{:window/id :collect-segments
-                     :window/task task-name
-                     :window/type :global
-                     :window/aggregation :onyx.windowing.aggregation/conj}]
-          :triggers [{:trigger/window-id :collect-segments
-                      :trigger/fire-all-extents? true
-                      :trigger/on :onyx.trigger/segment
-                      :trigger/threshold [1 :elements]
-                      :trigger/sync sync-fn}]}})
-
 (defn build-job [workflow compact-job task-scheduler]
   (reduce (fn [job {:keys [name task-opts type args] :as task}]
             (case type
               :seq (add-task job (apply onyx.tasks.seq/input-serialized name task-opts (:input task) args))
               :elastic (add-task job (apply onyx.tasks.elasticsearch/output name task-opts args))
-              :windowed (add-task job (apply windowed-task name task-opts args))
-              :fn (add-task job (apply onyx.tasks.function/function name task-opts args))
-              :null-out (add-task job (apply onyx.tasks.null/output name task-opts args))
-              :async-out (add-task job (apply onyx.tasks.core-async/output name task-opts (:chan-size task) args))))
+              :fn (add-task job (apply onyx.tasks.function/function name task-opts args))))
           {:workflow workflow
            :catalog []
            :lifecycles []
@@ -114,11 +95,11 @@
                    out-channels))))))
 
 (defn get-document-rest-request 
-  [{:keys [primary-key name] :as segment}]
+  [doc-id name]
   {:elasticsearch/index :get_together
    :elasticsearch/mapping-type :group
-   :elasticsearch/write-type :create
-   :elasticsearch/doc-id primary-key
+   :elasticsearch/write-type :index
+   :elasticsearch/id doc-id
    :elasticsearch/message {:name name}})
 
 (def es-host "127.0.0.1")
@@ -129,24 +110,51 @@
   {:elasticsearch/host es-host
    :elasticsearch/port es-rest-port})
 
-(def test-set
-  (map #(hash-map :primary-key %1 :name %2) (range 10) ["John" "Maria" "Peter" "Sasquatch"]))
+(def test-index :output_test)
 
-(deftest abs-plugin-test
+(def test-set
+  (map get-document-rest-request (range 4) ["John" "Maria" "Peter" "Sasquatch"]))
+
+(def test-set2
+  [{:elasticsearch/message {:name "http:insert_detail-msg_noid" :index "one"}
+    :elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :index}
+   {:elasticsearch/message {:name "http:insert_detail-msg_id"}
+    :elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :index
+    :elasticsearch/id "1"}])
+
+(defn index-documents []
   (let [n-messages 5
         task-opts {:onyx/batch-size 20}
-        job (build-job [[:in :transform]  [:transform :write-elastic]] 
+        job (build-job [[:in :write-elastic]]
                        [{:name :in
                          :type :seq 
                          :task-opts task-opts 
-                         :input test-set}
-                        {:name :transform
-                         :type :fn
-                         :task-opts (assoc task-opts :onyx/fn ::get-document-rest-request)}
+                         :input test-set2} 
                         {:name :write-elastic
                          :type :elastic
                          :task-opts (merge task-opts write-elastic-opts)}]
-                       :onyx.task-scheduler/balanced)
-        output (run-test-job job 3)]
-    (is (= (set (map (fn [x] {:elasticsearch/message {:n x}}) (range n-messages)))
-           (set (:out output))))))
+                       :onyx.task-scheduler/balanced)]
+    (run-test-job job 3)
+    ; Wait for Elasticsearch to update
+    (Thread/sleep 7000)))
+
+(defn delete-index [index]
+  (let [client (spdx/client {:hosts [(str "http://" es-host ":" es-rest-port)]})]
+    (spdx/request client {:url [index] :method :delete})))
+
+(use-fixtures :once (fn [f]
+                      (index-documents)
+                      (f)
+                      (delete-index test-index)))
+
+(let [client (spdx/client {:hosts [(str "http://" es-host ":" es-rest-port)]})]
+
+  (deftest check-http&write-job
+    (testing "Insert: plain message with no id defined"
+      (let [{:keys [:body]} (spdx/request client {:url [test-index :group :_search] :method :get :body {:query {:match {:index "one"}}}})]
+        (is (= 1 (get-in body [:hits :total])))
+        (is (not-empty (first (get-in body [:hits :hits]))))))))
