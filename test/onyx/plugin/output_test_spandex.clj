@@ -129,7 +129,21 @@
     :elasticsearch/index test-index
     :elasticsearch/mapping-type :group
     :elasticsearch/write-type :update
-    :elasticsearch/id "1"}])
+    :elasticsearch/id "1"}
+   {:elasticsearch/message {:name "http:insert_detail-msg_id"}
+    :elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :upsert
+    :elasticsearch/id "2"}
+   {:elasticsearch/message {:name "http:insert-to-be-deleted"}
+    :elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :index
+    :elasticsearch/id "3"}
+   {:elasticsearch/index test-index
+    :elasticsearch/mapping-type :group
+    :elasticsearch/write-type :delete
+    :elasticsearch/id "3"}])
 
 (defn index-documents []
   (let [n-messages 5
@@ -170,4 +184,10 @@
         (testing "Insert: detail message with id defined"
           (is (= 1 (get-in body [:hits :total]))))
         (testing "Update: detail message with id defined"
-          (is (= "new" (get-in (first (get-in body [:hits :hits])) [:_source :new])))))))
+          (is (= "new" (get-in (first (get-in body [:hits :hits])) [:_source :new])))))
+    (testing "Upsert: detail message with id defined"
+      (let [{:keys [:body]} (search client {:query {:match {:_id "2"}}})]
+        (is (= 1 (get-in body [:hits :total])))))
+    (testing "Delete: detail defined"
+      (let [{:keys [:body]} (search client {:query {:match {:_id "3"}}})]
+        (is (= 0 (get-in body [:hits :total])))))))

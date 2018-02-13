@@ -10,6 +10,8 @@
   (case write-type
     :index  (if (some? id) :put :post)
     :update :post
+    :upsert :post
+    :update-by-query :post
     :delete :delete
     (throw (Exception. (str "Invalid write type: " write-type)))))
 
@@ -23,6 +25,8 @@
 (def update-request (merge base-write-request {:elasticsearch/id s/Any
                                                :elasticsearch/message {s/Keyword s/Any}}))
 
+(def update-by-query-request (merge base-write-request {:elasticsearch/message {:query {s/Keyword s/Any} :script {s/Keyword s/Any}}}))
+
 (def delete-request (merge base-write-request {:elasticsearch/id s/Any}))
 
 (defn- validation-schema
@@ -30,8 +34,13 @@
   (case write-type
     :index  index-request
     :update update-request
+    :upsert update-request
+    :update-by-query update-by-query-request
     :delete delete-request
     (throw (Exception. (str "Invalid write type: " write-type)))))
+
+(defn- wrap-update [x]
+  {:doc x})
 
 (s/defn rest-request
   "Takes in a settings map and returns a REST request to send to the spandex client."
@@ -44,7 +53,7 @@
                 :elasticsearch/message]} options]
     {:url (cond-> [index mapping-type] (some? id) (conj id) (= :update write-type) (conj :_update))
      :method (rest-method write-type id)
-     :body (if (= :update write-type) {:doc (or message {})} (or message {}))}))
+     :body (cond-> (or message {}) (contains? #{:update :upsert} write-type) wrap-update (= :upsert write-type) (assoc :doc_as_upsert true))}))
 
 (defrecord ElasticSearchWriter []
   p/Plugin
