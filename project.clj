@@ -1,4 +1,4 @@
-(defproject org.onyxplatform/onyx-elasticsearch "0.9.15.0"
+(defproject org.onyxplatform/onyx-elasticsearch "0.12.2.1-alpha1"
   :description "Onyx plugin for Elasticsearch"
   :url "https://github.com/onyx-platform/onyx-elasticsearch"
   :license {:name "Eclipse Public License"
@@ -15,7 +15,6 @@
                  ^{:voom {:repo "git@github.com:onyx-platform/onyx.git" :branch "master"}}
                  [org.onyxplatform/onyx "0.12.2"]
                  [cc.qbits/spandex "0.5.5"]
-                 [clojurewerkz/elastisch "2.2.0"]
                  [prismatic/schema "1.1.7"]]
   :profiles {:dev {:dependencies [[http-kit "2.1.19"]
                                   [org.clojure/data.json "0.2.6"]]

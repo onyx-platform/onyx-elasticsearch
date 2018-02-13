@@ -5,7 +5,6 @@
             [onyx.plugin.seq]
             [onyx.job :refer [add-task]]
             [onyx.tasks.core-async]
-            [onyx.util.helper :as u]
             [onyx.tasks.seq]
             [onyx.tasks.null]
             [onyx.tasks.function]
@@ -58,8 +57,6 @@
     :onyx/type :output
     :onyx/medium :elasticsearch
     :elasticsearch/host es-host
-    :elasticsearch/cluster-name (u/es-cluster-name es-host es-rest-port)
-    :elasticsearch/http-ops {}
     :elasticsearch/index id
     :elasticsearch/mapping "_default_"
     :onyx/batch-size batch-size
